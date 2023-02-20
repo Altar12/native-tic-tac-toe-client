@@ -10,7 +10,13 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@project-serum/anchor": "^0.26.0",
     "@project-serum/borsh": "^0.2.5",
-    "@solana/web3.js": "^1.73.2"
+    "@solana/spl-token": "^0.3.7",
+    "@solana/web3.js": "^1.73.2",
+    "prompt-sync": "^4.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^4.9.5"
   }
 }
