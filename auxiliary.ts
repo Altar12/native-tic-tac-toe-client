@@ -51,7 +51,7 @@ export class Game {
     static isValidOngoingGame(buffer: Buffer): boolean {
       try {
         const { stateDiscriminator, isInitialized } = this.borshAccountSchema.decode(buffer)
-        if (stateDiscriminator > 1 || !isInitialized)
+        if (stateDiscriminator !== 1 || !isInitialized)
           return false
       } catch (err) {
         return false
@@ -64,7 +64,6 @@ export class Game {
     static async deserialize(buffer: Buffer, player: PublicKey, gameAddress: PublicKey): Promise<Game> {
       // deserializing the buffer and extracting the required fields
       const { players, board, turns, stakeMint, stakeAmount } = this.borshAccountSchema.decode(buffer)
-      
       // setting the opponent address
       let opponent: string
       if (player.toBase58() === players[0].toBase58())
@@ -119,7 +118,7 @@ export function isValidAddress(input: string): boolean {
     if (input.length < 32 || input.length > 44)
       return false
     let asciiValue: number
-    for (let index=0; index<44; index++) {
+    for (let index=0; index<input.length; index++) {
       asciiValue = input.charCodeAt(index)
       if (asciiValue>47 && asciiValue<58
           || asciiValue>64 && asciiValue<91

@@ -13,7 +13,8 @@ import { isValidAddress,
          isValidNumber,
          Game,
          createGameInstructionLayout,
-         playGameInstructionLayout } from "./auxiliary"
+         playGameInstructionLayout,
+         gameInstructionLayout } from "./auxiliary"
 import { getAssociatedTokenAddressSync,
          getAccount,
          getMint, 
@@ -278,7 +279,7 @@ async function createGame(user: Keypair) {
 async function resumeGame(user: Keypair) {
 
     let input: string
-    // fetch all the games where user is a player
+    // fetch all the games where user is a player and that are ongoing
     const initiatedGames = await connection.getProgramAccounts(programId, {
                                 filters: [
                                     {
@@ -286,7 +287,13 @@ async function resumeGame(user: Keypair) {
                                             offset: 0,
                                             bytes: user.publicKey.toBase58(),
                                         }
-                                    }
+                                    },
+                                    {
+                                        memcmp: {
+                                            offset: 2*32+1*9,
+                                            bytes: "2", // corresponds to 1 in base58
+                                        }
+                                    },
                                 ]
                             })
     const acceptedGames = await connection.getProgramAccounts(programId, {
@@ -296,25 +303,23 @@ async function resumeGame(user: Keypair) {
                                             offset: 32,
                                             bytes: user.publicKey.toBase58()
                                         }
-                                    }
+                                    },
+                                    {
+                                        memcmp: {
+                                            offset: 2*32+1*9,
+                                            bytes: "2", // corresponds to 1 in base58
+                                        }
+                                    },
                                 ]
                             })
-
-    // filter for playable games
     const allGames = initiatedGames.concat(acceptedGames)
-    let playableGames: Game[] = []
-    let game: { pubkey: PublicKey,
-                account: AccountInfo<Buffer> 
-              }
-    for (let i=0; i<allGames.length; ++i) {
-        game = allGames[i]
-        if (Game.isValidOngoingGame(game.account.data))
-            playableGames.push(await Game.deserialize(game.account.data, user.publicKey, game.pubkey))
-    }
-    if (playableGames.length === 0) {
+    if (allGames.length === 0) {
         console.log("You do not have any ongoing games at the moment...")
         return
     }
+    let playableGames: Game[] = []
+    for (let i=0; i<allGames.length; ++i)
+            playableGames.push(await Game.deserialize(allGames[i].account.data, user.publicKey, allGames[i].pubkey))
 
     // prompt user to select game to resume
     let selectedGame: PublicKey
@@ -370,8 +375,8 @@ async function acceptGame(user: Keypair) {
                                                 },
                                                 {
                                                     memcmp: {
-                                                        offset: 32*2+2*9,
-                                                        bytes: bs58.encode(new BN(0).toArrayLike(Buffer, "be", 8)),
+                                                        offset: 32*2+1*9,
+                                                        bytes: "1", // corresponds to 0 in base 58
                                                     }
                                                 }
                                             ]
@@ -456,8 +461,8 @@ async function cancelGame(user: Keypair) {
                                         },
                                         {
                                             memcmp: {
-                                                offset: 32*2+2*9,
-                                                bytes: bs58.encode(new BN(0).toArrayLike(Buffer, "be", 8)),
+                                                offset: 32*2+1*9,
+                                                bytes: "1", // corresponds to 0 in base58
                                             }
                                         }
                                     ]
@@ -552,6 +557,10 @@ async function sendAcceptGameTxn(
     user: Keypair,
     game: PublicKey,
     tokenAccount: Account) {
+        // prepare instruction data
+        let buffer = Buffer.alloc(1000)
+        gameInstructionLayout.encode({ variant: new BN(1) }, buffer)
+        buffer = buffer.slice(0, createGameInstructionLayout.getSpan(buffer))
 
         // get the escrow account address
         const [escrow] = PublicKey.findProgramAddressSync([Buffer.from("escrow"), tokenAccount.mint.toBuffer()], programId)
@@ -565,7 +574,8 @@ async function sendAcceptGameTxn(
                                     createAccountMeta(tokenAccount.address, false, true),
                                     createAccountMeta(TOKEN_PROGRAM_ID, false, false),
                                 ],
-                                programId
+                                programId,
+                                data: buffer
                             })
         const transaction = new Transaction().add(instruction)
         const txn = await sendAndConfirmTransaction(connection, transaction, [user])
@@ -577,6 +587,10 @@ async function sendCancelGameTxn(
     game: PublicKey,
     stakeMint: PublicKey,
     tokenAccount: PublicKey) {
+        // prepare instruction data
+        let buffer = Buffer.alloc(1000)
+        gameInstructionLayout.encode({ variant: new BN(4) }, buffer)
+        buffer = buffer.slice(0, createGameInstructionLayout.getSpan(buffer))
 
         // get escrow and authority addresses
         const [escrow] = PublicKey.findProgramAddressSync([Buffer.from("escrow"), stakeMint.toBuffer()], programId)
@@ -592,7 +606,8 @@ async function sendCancelGameTxn(
                 createAccountMeta(authority, false, false),
                 createAccountMeta(TOKEN_PROGRAM_ID, false, false)
             ],
-            programId
+            programId,
+            data: buffer,
         })
         const transaction = new Transaction().add(instruction)
         const txn = await sendAndConfirmTransaction(connection, transaction, [user])
@@ -630,6 +645,10 @@ async function sendCloseGameTxn(
     stakeMint: PublicKey,
     playerTwo?: PublicKey,
     winner?: PublicKey) {
+        // prepare instruction data
+        let buffer = Buffer.alloc(1000)
+        gameInstructionLayout.encode({ variant: new BN(3) }, buffer)
+        buffer = buffer.slice(0, createGameInstructionLayout.getSpan(buffer))
 
         // get escrow & authority addresses
         const [escrow] = PublicKey.findProgramAddressSync([Buffer.from("escrow"), stakeMint.toBuffer()], programId)
@@ -662,6 +681,7 @@ async function sendCloseGameTxn(
         const instruction = new TransactionInstruction({
             keys,
             programId,
+            data: buffer,
         })
         const transaction = new Transaction().add(instruction)
         const txn = await sendAndConfirmTransaction(connection, transaction, [user])
