@@ -36,6 +36,18 @@ export class Game {
         borsh.bool("isInitialized"),
     ])
 
+    // schema for an account that corresponds to a won game
+    static borshAccountSchema2 = borsh.struct([
+      borsh.array(borsh.publicKey(), 2, "players"),
+      borsh.array(borsh.array(borsh.option(borsh.rustEnum([borsh.struct([], "x"), borsh.struct([], "y")])), 3), 3, "board"),
+      borsh.u8("stateDiscriminator"),
+      borsh.publicKey("winner"),
+      borsh.u8("turns"),
+      borsh.publicKey("stakeMint"),
+      borsh.u64("stakeAmount"),
+      borsh.bool("isInitialized"),
+  ])
+
     static isValidOngoingGame(buffer: Buffer): boolean {
       try {
         const { stateDiscriminator, isInitialized } = this.borshAccountSchema.decode(buffer)
@@ -94,7 +106,7 @@ export const createGameInstructionLayout = borsh.struct([
                                     ])
 
 // instruction data layout for playing a game
-export const playGameInstructionSchema = borsh.struct([
+export const playGameInstructionLayout = borsh.struct([
                                             borsh.u8("variant"),
                                             borsh.u8("row"),
                                             borsh.u8("col"),
@@ -122,7 +134,8 @@ export function isValidAddress(input: string): boolean {
       return false
     return true
 }
-  
+
+// verifies the input string corresponds to a positive real number (no sign symbol should be used)
 export function isValidNumber(input: string): boolean {
     if (input.length === 0) 
       return false
