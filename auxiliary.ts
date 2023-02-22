@@ -59,6 +59,17 @@ export class Game {
       return true
     }
 
+    static isValidUnacceptedGame(buffer: Buffer): boolean {
+      try {
+        const { stateDiscriminator, isInitialized } = this.borshAccountSchema.decode(buffer)
+        if (stateDiscriminator !== 0 || !isInitialized)
+          return false
+      } catch (err) {
+        return false
+      }
+      return true
+    }
+
     // will call isValidOngoingGame first, only the accounts that return true will be deserialized by calling below function
     // so not putting the decode construct in try catch
     static async deserialize(buffer: Buffer, player: PublicKey, gameAddress: PublicKey): Promise<Game> {

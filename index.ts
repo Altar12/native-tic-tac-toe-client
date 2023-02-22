@@ -26,8 +26,11 @@ import bs58 from "bs58"
 
 // configurations
 //const programId = new PublicKey("EDc3WwozrtSCmZCQSa4v8Mqw5kup5bsxuTNLyD8bEzEZ")
-const programId = new PublicKey("7Y8kCjUujms2w26ruzHUpayKQMtzJcnVPJzVuVWgBio1")
-const connection = new Connection(clusterApiUrl("devnet"), "confirmed")
+//const programId = new PublicKey("7Y8kCjUujms2w26ruzHUpayKQMtzJcnVPJzVuVWgBio1")
+const programId = new PublicKey("GibceUngukVyuLd3yRhhLyuxPmrGG6FnumxUwjSeFzvp")
+const network = clusterApiUrl("devnet")
+
+// for taking user input
 const prompter = promptSync()
 
 function main() {
@@ -94,6 +97,7 @@ async function playGame(user: Keypair, gameAddress: PublicKey) {
     let row: number
     let column: number
     type Tile = { x?: {}, y?: {} }|null
+    const connection = new Connection(network, "confirmed")
 
     // function to get the print character for a tile
     function getTileCharacter(tile: Tile): string {
@@ -149,10 +153,10 @@ async function playGame(user: Keypair, gameAddress: PublicKey) {
         currentPlayerIndex = 1
 
     // print the board
-    console.log("--------------------------")
+    console.log("----------------")
     for (let i=0; i<3; ++i) {
-        console.log(`\t${getTileCharacter(board[i][0])}\t${getTileCharacter(board[i][1])}\t${getTileCharacter(board[i][2])}`)
-        console.log("--------------------------")
+        console.log(`  ${getTileCharacter(board[i][0])} || ${getTileCharacter(board[i][1])} || ${getTileCharacter(board[i][2])}`)
+        console.log("----------------")
     }
 
     // play game logic
@@ -162,6 +166,7 @@ async function playGame(user: Keypair, gameAddress: PublicKey) {
             // prompt for input until valid input is received
             while (!getTileToMark(board));
             await sendPlayTxn(user, gameAddress, {row, column})
+            gameAccount = await connection.getAccountInfo(gameAddress)
         } else {
             // wait for opponent's move
             console.log("Waiting for opponent's move...")
@@ -176,10 +181,10 @@ async function playGame(user: Keypair, gameAddress: PublicKey) {
         }
         // print the board
         board = Game.borshAccountSchema.decode(gameAccount.data).board
-        console.log("--------------------------")
+        console.log("----------------")
         for (let i=0; i<3; ++i) {
-            console.log(`\t${getTileCharacter(board[i][0])}\t${getTileCharacter(board[i][1])}\t${getTileCharacter(board[i][2])}`)
-            console.log("--------------------------")
+            console.log(`  ${getTileCharacter(board[i][0])} || ${getTileCharacter(board[i][1])} || ${getTileCharacter(board[i][2])}`)
+            console.log("----------------")
         }
         // update the current player
         currentPlayerIndex = (currentPlayerIndex+1)%2
@@ -209,10 +214,15 @@ async function playGame(user: Keypair, gameAddress: PublicKey) {
 
 async function createGame(user: Keypair) {
 
+    const connection = new Connection(network, "confirmed")
     // get the opponent's address
     let input: string = prompter("Enter the address of opponent: ").trim()
     if (!isValidAddress(input)) {
         console.error("Input does not correspond to a valid address...")
+        return
+    }
+    if (input === user.publicKey.toBase58()) {
+        console.error("Both the players in a game must be different");
         return
     }
     const playerTwo = new PublicKey(input)
@@ -254,6 +264,10 @@ async function createGame(user: Keypair) {
         return
     }
     const stakeAmount = Number(input) * (10 ** mintInfo.decimals)
+    if (stakeAmount === 0) {
+        console.error("Stake amount must be non-zero")
+        return
+    }
     if (stakeAmount > Number(tokenAccount.amount)) {
         console.error("Stake amount specified exceeds the token balance...")
         return
@@ -278,8 +292,9 @@ async function createGame(user: Keypair) {
 
 async function resumeGame(user: Keypair) {
 
+    const connection = new Connection(network, "confirmed")
     let input: string
-    // fetch all the games where user is a player and that are ongoing
+    // fetch all the games where user is a player
     const initiatedGames = await connection.getProgramAccounts(programId, {
                                 filters: [
                                     {
@@ -287,13 +302,7 @@ async function resumeGame(user: Keypair) {
                                             offset: 0,
                                             bytes: user.publicKey.toBase58(),
                                         }
-                                    },
-                                    {
-                                        memcmp: {
-                                            offset: 2*32+1*9,
-                                            bytes: "2", // corresponds to 1 in base58
-                                        }
-                                    },
+                                    }
                                 ]
                             })
     const acceptedGames = await connection.getProgramAccounts(programId, {
@@ -303,16 +312,14 @@ async function resumeGame(user: Keypair) {
                                             offset: 32,
                                             bytes: user.publicKey.toBase58()
                                         }
-                                    },
-                                    {
-                                        memcmp: {
-                                            offset: 2*32+1*9,
-                                            bytes: "2", // corresponds to 1 in base58
-                                        }
-                                    },
+                                    }
                                 ]
                             })
-    const allGames = initiatedGames.concat(acceptedGames)
+    
+    // filter for currently ongoing games
+    let allGames = initiatedGames.concat(acceptedGames).filter((game) => {
+        return Game.isValidOngoingGame(game.account.data)
+    })
     if (allGames.length === 0) {
         console.log("You do not have any ongoing games at the moment...")
         return
@@ -363,24 +370,24 @@ async function resumeGame(user: Keypair) {
 
 async function acceptGame(user: Keypair) {
 
+    const connection = new Connection(network, "confirmed")
     let input: string
-    // fetch all the games where user is player two and are unaccepted
-    const gameAccounts = await connection.getProgramAccounts(programId, {
+    // fetch all the games where user is player two
+    let gameAccounts = await connection.getProgramAccounts(programId, {
                                             filters: [
                                                 {
                                                     memcmp: {
                                                         offset: 32,
                                                         bytes: user.publicKey.toBase58(),
                                                     }
-                                                },
-                                                {
-                                                    memcmp: {
-                                                        offset: 32*2+1*9,
-                                                        bytes: "1", // corresponds to 0 in base 58
-                                                    }
                                                 }
                                             ]
                         })
+
+    // filter for unaccepted games
+    gameAccounts = gameAccounts.filter((game) => {
+        return Game.isValidUnacceptedGame(game.account.data)
+    })
     if (gameAccounts.length === 0) {
         console.error("You have no pending games to accept...")
         return
@@ -443,30 +450,31 @@ async function acceptGame(user: Keypair) {
 
     // send transaction to accept the game
     await sendAcceptGameTxn(user, selectedGame.address, tokenAccount)
+
     // start playing the game
     await playGame(user, selectedGame.address)
 }
 
 async function cancelGame(user: Keypair) {
+    
+    const connection = new Connection(network, "confirmed")
     let input: string
-
-    // fetch unaccepted games initiated by the user
-    const gameAccounts = await connection.getProgramAccounts(programId, {
+    // fetch all games created by the user
+    let gameAccounts = await connection.getProgramAccounts(programId, {
                                     filters: [
                                         {
                                             memcmp: {
                                                 offset: 0,
                                                 bytes: user.publicKey.toBase58(),
                                             }
-                                        },
-                                        {
-                                            memcmp: {
-                                                offset: 32*2+1*9,
-                                                bytes: "1", // corresponds to 0 in base58
-                                            }
                                         }
                                     ]
                                 })
+
+    // filter for unaccepted games
+    gameAccounts = gameAccounts.filter((game) => {
+        return Game.isValidUnacceptedGame(game.account.data)
+    })
     if (gameAccounts.length === 0) {
         console.log("There are no unaccepted games created by you at the moment...")
         return
@@ -507,9 +515,11 @@ async function cancelGame(user: Keypair) {
         }
         selectedGame = cancellableGames[Number(input)-1]
     }
+
     // get user's token account address to receive staked funds
     const stakeMint = new PublicKey(selectedGame.stakeMint)
     const tokenAccountAddress = getAssociatedTokenAddressSync(stakeMint, user.publicKey)
+
     // send transaction to cancel the game
     await sendCancelGameTxn(user, selectedGame.address, stakeMint, tokenAccountAddress)
     console.log("Cancelled game successfully...")
@@ -522,6 +532,7 @@ async function sendCreateGameTxn(
     tokenAccount: PublicKey,
     stakeAmount: number
 ): Promise<PublicKey> {
+        
         // prepare instruction data
         let buffer = Buffer.alloc(1000)
         createGameInstructionLayout.encode({ variant: new BN(0), playerTwo, stakeAmount: new BN(stakeAmount) }, buffer)
@@ -548,6 +559,7 @@ async function sendCreateGameTxn(
             data: buffer,
         })
         const transaction = new Transaction().add(instruction)
+        const connection = new Connection(network, "confirmed")
         const txn = await sendAndConfirmTransaction(connection, transaction, [user, gameKeypair])
         console.log(`https://explorer.solana.com/tx/${txn}?cluster=devnet`)
         return gameKeypair.publicKey
@@ -557,6 +569,7 @@ async function sendAcceptGameTxn(
     user: Keypair,
     game: PublicKey,
     tokenAccount: Account) {
+        
         // prepare instruction data
         let buffer = Buffer.alloc(1000)
         gameInstructionLayout.encode({ variant: new BN(1) }, buffer)
@@ -578,6 +591,7 @@ async function sendAcceptGameTxn(
                                 data: buffer
                             })
         const transaction = new Transaction().add(instruction)
+        const connection = new Connection(network, "confirmed")
         const txn = await sendAndConfirmTransaction(connection, transaction, [user])
         console.log(`https://explorer.solana.com/tx/${txn}?cluster=devnet`)
 }
@@ -587,6 +601,7 @@ async function sendCancelGameTxn(
     game: PublicKey,
     stakeMint: PublicKey,
     tokenAccount: PublicKey) {
+        
         // prepare instruction data
         let buffer = Buffer.alloc(1000)
         gameInstructionLayout.encode({ variant: new BN(4) }, buffer)
@@ -610,6 +625,7 @@ async function sendCancelGameTxn(
             data: buffer,
         })
         const transaction = new Transaction().add(instruction)
+        const connection = new Connection(network, "confirmed")
         const txn = await sendAndConfirmTransaction(connection, transaction, [user])
         console.log(`https://explorer.solana.com/tx/${txn}?cluster=devnet`)
 }
@@ -617,8 +633,8 @@ async function sendCancelGameTxn(
 async function sendPlayTxn(
     user: Keypair,
     game: PublicKey,
-    tile: {row: number, column: number}
-) {
+    tile: {row: number, column: number}) {
+    
     // prepare instruction data
     let buffer = Buffer.alloc(1000)
     playGameInstructionLayout.encode({ variant: new BN(2), row: new BN(tile.row), col: new BN(tile.column) }, buffer)
@@ -634,6 +650,7 @@ async function sendPlayTxn(
                             data: buffer
                         })
     const transaction = new Transaction().add(instruction)
+    const connection = new Connection(network, "confirmed")
     const txn = await sendAndConfirmTransaction(connection, transaction, [user])
     console.log(`https://explorer.solana.com/tx/${txn}?cluster=devnet`)
 
@@ -645,6 +662,7 @@ async function sendCloseGameTxn(
     stakeMint: PublicKey,
     playerTwo?: PublicKey,
     winner?: PublicKey) {
+
         // prepare instruction data
         let buffer = Buffer.alloc(1000)
         gameInstructionLayout.encode({ variant: new BN(3) }, buffer)
@@ -684,6 +702,7 @@ async function sendCloseGameTxn(
             data: buffer,
         })
         const transaction = new Transaction().add(instruction)
+        const connection = new Connection(network, "confirmed")
         const txn = await sendAndConfirmTransaction(connection, transaction, [user])
         console.log(`https://explorer.solana.com/tx/${txn}?cluster=devnet`)
 }
