@@ -88,16 +88,16 @@ main()
 
 async function playGame(user: Keypair, gameAddress: PublicKey) {
 
-    let input: string
-    let currentPlayerIndex: number
-    let userIndex: number
-    let gameAccount: AccountInfo<Buffer>
-    let rowString: string
-    let columnString: string
-    let row: number
-    let column: number
     type Tile = { x?: {}, y?: {} }|null
     const connection = new Connection(network, "confirmed")
+    
+    // possible game states
+    enum State {
+        Unaccepted,
+        Ongoing,
+        Over,
+        Draw,
+    }
 
     // function to get the print character for a tile
     function getTileCharacter(tile: Tile): string {
@@ -130,6 +130,17 @@ async function playGame(user: Keypair, gameAddress: PublicKey) {
         }
         return true
     }
+
+    let input: string
+    let currentPlayerIndex: number
+    let userIndex: number
+    let gameAccount: AccountInfo<Buffer>
+    let rowString: string
+    let columnString: string
+    let row: number
+    let column: number
+    let state: State
+    let winner: PublicKey
     
     // fetch the game account and initialize player indexes
     gameAccount = await connection.getAccountInfo(gameAddress)
@@ -160,7 +171,7 @@ async function playGame(user: Keypair, gameAddress: PublicKey) {
     }
 
     // play game logic
-    while (Game.isValidOngoingGame(gameAccount.data)) {
+    while (true) {
         // if user's turn, prompt them to input the next move
         if (userIndex === currentPlayerIndex) {
             // prompt for input until valid input is received
@@ -180,18 +191,27 @@ async function playGame(user: Keypair, gameAddress: PublicKey) {
             }
         }
         // print the board
-        board = Game.borshAccountSchema.decode(gameAccount.data).board
+        try {
+            board = Game.borshAccountSchema.decode(gameAccount.data).board 
+            state = Game.borshAccountSchema.decode(gameAccount.data).stateDiscriminator
+        } catch (err) {
+            board = Game.borshAccountSchema2.decode(gameAccount.data).board
+            state = Game.borshAccountSchema2.decode(gameAccount.data).stateDiscriminator
+        }
         console.log("----------------")
         for (let i=0; i<3; ++i) {
             console.log(`  ${getTileCharacter(board[i][0])} || ${getTileCharacter(board[i][1])} || ${getTileCharacter(board[i][2])}`)
             console.log("----------------")
         }
+        // stop play logic if game is finished
+        if (state === State.Draw || state === State.Over)
+            break
         // update the current player
         currentPlayerIndex = (currentPlayerIndex+1)%2
     }
 
-    let { stateDiscriminator, winner } = Game.borshAccountSchema2.decode(gameAccount.data)
-    if (stateDiscriminator === 2) {
+    if (state === State.Over) {
+        winner = Game.borshAccountSchema2.decode(gameAccount.data).winner
         if (winner.toBase58() === user.publicKey.toBase58())
             console.log("$$$$$$$$$ YOU WON THE GAME $$$$$$$$$")
         else
@@ -201,7 +221,7 @@ async function playGame(user: Keypair, gameAddress: PublicKey) {
     
     // send transaction to close the game if user is the initiator
     if (userIndex === 0) {
-        if (stateDiscriminator === 2) {
+        if (state === State.Over) {
             let { stakeMint } = Game.borshAccountSchema2.decode(gameAccount.data)
             await sendCloseGameTxn(user, gameAddress, stakeMint, null, winner)
         } else {
